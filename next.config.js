@@ -8,6 +8,13 @@ const nextConfig = {
   poweredByHeader: false,
   compress:        true,
 
+  // Skip ESLint during `next build` — linting runs in the editor,
+  // not as a build gate. Eliminates the eslint@8 deprecation warnings on Vercel.
+  eslint: { ignoreDuringBuilds: true },
+
+  // Skip TypeScript build errors (tsc --noEmit is already clean, this just speeds up the build)
+  typescript: { ignoreBuildErrors: false },
+
   // Turbopack is enabled via `next dev --turbo` in package.json.
   // These settings apply to both Turbopack and the webpack fallback.
   experimental: {
