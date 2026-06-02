@@ -103,9 +103,47 @@ export async function GET(req: Request) {
       const { data } = await getSupabaseAdmin()
         .from('products').select('*').eq('barcode', barcode).maybeSingle();
       if (data) return NextResponse.json(mapProduct(data as Record<string, unknown>));
-    } catch { /* fall through to static */ }
+    } catch { /* fall through */ }
+
+    // Not in DB — check static seed
     const found = PRODUCTS.find(p => p.barcode === barcode);
     if (!found) return NextResponse.json(null, { status: 404 });
+
+    // Static product found but NOT in DB.
+    // Auto-insert it so any subsequent FK reference (e.g. business_products) works.
+    try {
+      const { data: maxRow } = await getSupabaseAdmin()
+        .from('products').select('id').order('id', { ascending: false }).limit(1).maybeSingle();
+      const nextId = ((maxRow?.id as number) ?? 0) + 1;
+
+      const row = {
+        id:             nextId,
+        name:           found.name,
+        price:          found.price,
+        original_price: found.originalPrice,
+        category:       found.category,
+        sub_category:   found.subCategory   ?? null,
+        icon:           found.icon,
+        stock:          found.stock,
+        sku:            found.sku,
+        supplier_id:    found.supplierId    ?? null,
+        rating:         found.rating        ?? 0,
+        reviews:        found.reviews       ?? 0,
+        sold:           found.sold          ?? 0,
+        description:    found.description   ?? '',
+        barcode:        found.barcode       ?? null,
+        tags:           found.tags          ?? [],
+        brand:          found.brand         ?? null,
+        image_url:      found.imageUrl      ?? null,
+        image_urls:     found.imageUrls     ?? [],
+      };
+
+      const { data: inserted } = await getSupabaseAdmin()
+        .from('products').insert(row).select().maybeSingle();
+
+      if (inserted) return NextResponse.json(mapProduct(inserted as Record<string, unknown>));
+    } catch { /* DB insert failed — return static data as-is */ }
+
     return NextResponse.json(found);
   }
 
