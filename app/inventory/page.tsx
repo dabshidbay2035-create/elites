@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import Header from '@/components/Header';
 import { useApp } from '@/context/AppContext';
 import { CATEGORIES } from '@/lib/data';
@@ -11,9 +11,13 @@ const EMOJI_OPTIONS = ['📦','📱','💻','🎧','👗','👟','🏠','🍎','
 
 interface ProductForm {
   name: string; price: string; originalPrice: string; category: string;
-  icon: string; stock: string; sku: string; description: string; supplierId: string;
+  icon: string; stock: string; sku: string; description: string;
+  supplierId: string; barcode: string;
 }
-const emptyForm: ProductForm = { name:'', price:'', originalPrice:'', category:'electronics', icon:'📦', stock:'0', sku:'', description:'', supplierId:'' };
+const emptyForm: ProductForm = {
+  name: '', price: '', originalPrice: '', category: 'electronics',
+  icon: '📦', stock: '0', sku: '', description: '', supplierId: '', barcode: '',
+};
 
 export default function InventoryPage() {
   const { state, adjustStock, toast, reloadProducts } = useApp();
@@ -22,23 +26,28 @@ export default function InventoryPage() {
   const [search, setSearch]   = useState('');
   const [filter, setFilter]   = useState<StockFilter>('all');
 
-  // ── CRUD state ───────────────────────────────────────────
+  // ── CRUD state ────────────────────────────────────────────
   const [showForm, setShowForm]     = useState(false);
   const [editingId, setEditingId]   = useState<number | null>(null);
   const [form, setForm]             = useState<ProductForm>(emptyForm);
   const [saving, setSaving]         = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
+  // ── Barcode scanner state ─────────────────────────────────
+  const [barcodeInput, setBarcodeInput] = useState('');
+  const [lookingUp, setLookingUp]       = useState(false);
+  const [scanning, setScanning]         = useState(false);
+  const scanningRef = useRef(false);
+  const videoRef    = useRef<HTMLVideoElement>(null);
+  const streamRef   = useRef<MediaStream | null>(null);
+  const rafRef      = useRef<number>(0);
+
   const pf = (k: keyof ProductForm, v: string) => setForm(f => ({ ...f, [k]: v }));
 
-  const openAdd = () => {
-    setEditingId(null);
-    setForm(emptyForm);
-    setShowForm(true);
-  };
+  const openAdd = () => { setEditingId(null); setForm(emptyForm); setShowForm(true); };
 
   const openEdit = (productId: number) => {
-    const p = products.find(x => x.id === productId);
+    const p = products.find(x => x.id === productId) as (typeof products[number] & { barcode?: string }) | undefined;
     if (!p) return;
     setEditingId(productId);
     setForm({
@@ -47,17 +56,122 @@ export default function InventoryPage() {
       stock: String(inventory.find(i => i.id === p.id)?.stock ?? p.stock),
       sku: p.sku, description: p.description,
       supplierId: p.supplierId ? String(p.supplierId) : '',
+      barcode: p.barcode ?? '',
     });
     setShowForm(true);
   };
 
+  // ── Barcode lookup ────────────────────────────────────────
+  const handleBarcodeLookup = useCallback(async (code: string) => {
+    code = code.trim();
+    if (!code) return;
+    setLookingUp(true);
+    try {
+      const res = await fetch(`/api/products?barcode=${encodeURIComponent(code)}`);
+      if (res.ok && res.status !== 404) {
+        const p = await res.json();
+        if (p && p.id) {
+          toast(`Found: ${p.name}`, 'success');
+          const localStock = inventory.find(i => i.id === p.id)?.stock ?? p.stock ?? 0;
+          setEditingId(p.id);
+          setForm({
+            name: p.name ?? '', price: String(p.price ?? ''),
+            originalPrice: String(p.originalPrice ?? p.price ?? ''),
+            category: p.category ?? 'electronics', icon: p.icon ?? '📦',
+            stock: String(localStock),
+            sku: p.sku ?? '', description: p.description ?? '',
+            supplierId: p.supplierId ? String(p.supplierId) : '',
+            barcode: code,
+          });
+          setShowForm(true);
+        } else {
+          toast('No product with that barcode — create one', 'default');
+          setEditingId(null);
+          setForm({ ...emptyForm, barcode: code });
+          setShowForm(true);
+        }
+      } else {
+        toast('No product with that barcode — create one', 'default');
+        setEditingId(null);
+        setForm({ ...emptyForm, barcode: code });
+        setShowForm(true);
+      }
+    } catch {
+      toast('Lookup failed — check your connection', 'error');
+    }
+    setLookingUp(false);
+    setBarcodeInput('');
+  }, [inventory, toast]);
+
+  // ── Camera scan ───────────────────────────────────────────
+  const stopScan = useCallback(() => {
+    scanningRef.current = false;
+    setScanning(false);
+    cancelAnimationFrame(rafRef.current);
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+  }, []);
+
+  const startCameraScan = useCallback(async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (!('BarcodeDetector' in window)) {
+      toast('Camera barcode detection not supported in this browser. Enter the barcode manually.', 'error');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+      });
+      streamRef.current = stream;
+      scanningRef.current = true;
+      setScanning(true);
+
+      // Give React time to render the <video> element
+      requestAnimationFrame(async () => {
+        if (!videoRef.current) { stopScan(); return; }
+        videoRef.current.srcObject = stream;
+        try { await videoRef.current.play(); } catch { stopScan(); return; }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const detector = new (window as any).BarcodeDetector({
+          formats: ['ean_13','ean_8','upc_a','upc_e','code_128','code_39','code_93','qr_code','data_matrix'],
+        });
+
+        const scanFrame = async () => {
+          if (!scanningRef.current || !videoRef.current) return;
+          try {
+            const barcodes = await detector.detect(videoRef.current);
+            if (barcodes.length > 0) {
+              const code = barcodes[0].rawValue as string;
+              stopScan();
+              await handleBarcodeLookup(code);
+              return;
+            }
+          } catch { /* keep scanning */ }
+          rafRef.current = requestAnimationFrame(scanFrame);
+        };
+        rafRef.current = requestAnimationFrame(scanFrame);
+      });
+    } catch (err: unknown) {
+      const name = err instanceof Error ? err.name : '';
+      toast(name === 'NotAllowedError' ? 'Camera permission denied' : 'Could not access camera', 'error');
+    }
+  }, [handleBarcodeLookup, stopScan, toast]);
+
+  // Clean up camera on unmount
+  useEffect(() => () => stopScan(), [stopScan]);
+
+  // ── Save ──────────────────────────────────────────────────
   const handleSave = async () => {
     if (!form.name.trim() || !form.price) { toast('Name and price required', 'error'); return; }
     setSaving(true);
     const body = {
-      name: form.name.trim(), price: form.price, originalPrice: form.originalPrice || form.price,
-      category: form.category, icon: form.icon, stock: form.stock, sku: form.sku.trim(),
-      description: form.description.trim(), supplierId: form.supplierId ? parseInt(form.supplierId, 10) : null,
+      name: form.name.trim(), price: form.price,
+      originalPrice: form.originalPrice || form.price,
+      category: form.category, icon: form.icon, stock: form.stock,
+      sku: form.sku.trim(), description: form.description.trim(),
+      supplierId: form.supplierId ? parseInt(form.supplierId, 10) : null,
+      barcode: form.barcode.trim() || null,
     };
     const url    = editingId ? `/api/products/${editingId}` : '/api/products';
     const method = editingId ? 'PATCH' : 'POST';
@@ -73,6 +187,7 @@ export default function InventoryPage() {
     }
   };
 
+  // ── Delete / restock ──────────────────────────────────────
   const handleDelete = async (productId: number, name: string) => {
     if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
     setDeletingId(productId);
@@ -87,7 +202,7 @@ export default function InventoryPage() {
     if (qty > 0) { adjustStock(productId, qty); toast(`Restocked ${qty} units ✓`, 'success'); }
   };
 
-  // ── Filtered items ───────────────────────────────────────
+  // ── Filtered list ─────────────────────────────────────────
   const items = useMemo(() => {
     return products.map(p => ({
       ...p, stock: inventory.find(i => i.id === p.id)?.stock ?? p.stock,
@@ -98,7 +213,8 @@ export default function InventoryPage() {
     }).filter(p => {
       if (!search.trim()) return true;
       const q = search.toLowerCase();
-      return p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q);
+      const bc = (p as typeof p & { barcode?: string }).barcode ?? '';
+      return p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || bc.toLowerCase().includes(q);
     });
   }, [products, inventory, filter, search]);
 
@@ -123,6 +239,71 @@ export default function InventoryPage() {
       </div>
       <p className="page-subtitle">Manage stock levels and product catalogue</p>
 
+      {/* ── Barcode scanner ──────────────────────────────── */}
+      <div style={{ padding: '0 16px 12px' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ position: 'relative', flex: 1 }}>
+            <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 16, pointerEvents: 'none' }}>
+              {lookingUp ? '⏳' : '🔖'}
+            </span>
+            <input
+              className="form-input"
+              style={{ paddingLeft: 34 }}
+              placeholder="Scan or type barcode to find / edit product…"
+              value={barcodeInput}
+              onChange={e => setBarcodeInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleBarcodeLookup(barcodeInput)}
+              disabled={lookingUp || scanning}
+            />
+          </div>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => handleBarcodeLookup(barcodeInput)}
+            disabled={!barcodeInput.trim() || lookingUp || scanning}
+            style={{ whiteSpace: 'nowrap' }}
+          >
+            {lookingUp ? 'Looking…' : '🔍 Find'}
+          </button>
+          <button
+            className={`btn btn-sm ${scanning ? 'btn-danger' : 'btn-secondary'}`}
+            onClick={scanning ? stopScan : startCameraScan}
+            style={{ whiteSpace: 'nowrap' }}
+            title={scanning ? 'Stop camera' : 'Scan with camera'}
+          >
+            {scanning ? '✕ Stop' : '📷 Scan'}
+          </button>
+        </div>
+
+        {scanning && (
+          <div style={{
+            marginTop: 10, borderRadius: 12, overflow: 'hidden', position: 'relative',
+            background: '#000', maxHeight: 240,
+          }}>
+            <video
+              ref={videoRef}
+              playsInline
+              muted
+              style={{ width: '100%', display: 'block', maxHeight: 240, objectFit: 'cover' }}
+            />
+            {/* aim guide */}
+            <div style={{
+              position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none',
+            }}>
+              <div style={{
+                width: 220, height: 80, border: '2px solid rgba(255,255,255,.8)',
+                borderRadius: 8, boxShadow: '0 0 0 9999px rgba(0,0,0,.35)',
+              }} />
+            </div>
+            <div style={{
+              position: 'absolute', bottom: 8, left: 0, right: 0, textAlign: 'center',
+              color: '#fff', fontSize: 12, textShadow: '0 1px 3px #000',
+            }}>
+              Point camera at barcode
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Stats */}
       <div className="stats-grid">
         <div className="stat-card"><div className="stat-icon">📦</div><div className="stat-value">{totalUnits.toLocaleString()}</div><div className="stat-label">Total Units</div></div>
@@ -133,7 +314,7 @@ export default function InventoryPage() {
 
       {/* Filters */}
       <div className="inventory-header">
-        <input className="inv-search" placeholder="Search by name or SKU…" value={search} onChange={e => setSearch(e.target.value)} />
+        <input className="inv-search" placeholder="Search by name, SKU or barcode…" value={search} onChange={e => setSearch(e.target.value)} />
         <select className="inv-filter" value={filter} onChange={e => setFilter(e.target.value as StockFilter)}>
           <option value="all">All</option>
           <option value="low">Low Stock</option>
@@ -165,12 +346,18 @@ export default function InventoryPage() {
             const original = products.find(x => x.id === p.id);
             const maxStock = original?.stock ?? 100;
             const pct = Math.round((p.stock / Math.max(maxStock, 1)) * 100);
+            const barcode = (p as typeof p & { barcode?: string }).barcode;
             return (
               <div key={p.id} className="inv-item">
                 <div className="inv-item-icon">{p.icon}</div>
                 <div className="inv-item-info">
                   <div className="inv-item-name">{p.name}</div>
-                  <div className="inv-item-sku">{p.sku} · ${p.price.toFixed(2)}</div>
+                  <div className="inv-item-sku">
+                    {p.sku} · ${p.price.toFixed(2)}
+                    {barcode && (
+                      <span style={{ marginLeft: 6, opacity: 0.55, fontSize: 11 }}>🔖 {barcode}</span>
+                    )}
+                  </div>
                   <div className="stock-bar-wrap">
                     <div className="stock-bar">
                       <div className={`stock-bar-fill ${fillClass(p.stock)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
@@ -200,7 +387,7 @@ export default function InventoryPage() {
         )}
       </div>
 
-      {/* ── Add / Edit Modal ─────────────────────────── */}
+      {/* ── Add / Edit Modal ──────────────────────────────── */}
       {showForm && (
         <div className="modal-overlay" onClick={() => !saving && setShowForm(false)}>
           <div className="modal-box" onClick={e => e.stopPropagation()}>
@@ -209,6 +396,7 @@ export default function InventoryPage() {
               <button className="modal-close" onClick={() => setShowForm(false)}>✕</button>
             </div>
             <div className="modal-body">
+
               {/* Icon picker */}
               <div className="form-group">
                 <label className="form-label">Icon</label>
@@ -262,9 +450,56 @@ export default function InventoryPage() {
                 </div>
               </div>
 
+              {/* Barcode field */}
+              <div className="form-group">
+                <label className="form-label">Barcode</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    className="form-input"
+                    placeholder="EAN-13, UPC-A, Code-128…"
+                    value={form.barcode}
+                    onChange={e => pf('barcode', e.target.value)}
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    title="Scan with camera"
+                    onClick={async () => {
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      if (!('BarcodeDetector' in window)) {
+                        toast('Camera scan not supported. Enter barcode manually.', 'error'); return;
+                      }
+                      try {
+                        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const detector = new (window as any).BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128','code_39','qr_code'] });
+                        const tmpVideo = document.createElement('video');
+                        tmpVideo.srcObject = stream; tmpVideo.playsInline = true; tmpVideo.muted = true;
+                        await tmpVideo.play();
+                        let found = false;
+                        for (let i = 0; i < 60 && !found; i++) {
+                          await new Promise(r => setTimeout(r, 200));
+                          const barcodes = await detector.detect(tmpVideo);
+                          if (barcodes.length > 0) {
+                            pf('barcode', barcodes[0].rawValue);
+                            found = true;
+                          }
+                        }
+                        stream.getTracks().forEach(t => t.stop());
+                        if (!found) toast('No barcode detected. Try again.', 'error');
+                      } catch { toast('Camera not available', 'error'); }
+                    }}
+                    style={{ flexShrink: 0 }}
+                  >
+                    📷
+                  </button>
+                </div>
+              </div>
+
               <div className="form-group">
                 <label className="form-label">Description</label>
-                <textarea className="form-input" rows={3} style={{ resize:'vertical', fontFamily:'inherit' }} placeholder="Product details…" value={form.description} onChange={e => pf('description', e.target.value)} maxLength={500} />
+                <textarea className="form-input" rows={3} style={{ resize: 'vertical', fontFamily: 'inherit' }} placeholder="Product details…" value={form.description} onChange={e => pf('description', e.target.value)} maxLength={500} />
               </div>
 
               <button className="btn btn-primary btn-full btn-lg" onClick={handleSave} disabled={saving}>
