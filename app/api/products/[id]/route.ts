@@ -33,6 +33,9 @@ function mapProduct(p: Record<string, unknown>) {
     brand,
     imageUrl:      p.image_url    ?? null,
     imageUrls:     p.image_urls   ?? [],
+    priceTiers:    Array.isArray(p.price_tiers) ? p.price_tiers : [],
+    isB2b:         Boolean(p.is_b2b ?? false),
+    moq:           (p.moq as number) ?? 1,
   };
 }
 
@@ -71,6 +74,9 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   if (body.barcode       !== undefined) updates.barcode       = body.barcode ?? null;
   if (body.tags          !== undefined) updates.tags          = Array.isArray(body.tags) ? body.tags : [];
   if (body.brand         !== undefined) updates.brand         = body.brand ?? null;
+  if (body.priceTiers    !== undefined) updates.price_tiers   = Array.isArray(body.priceTiers) ? body.priceTiers : [];
+  if (body.isB2b         !== undefined) updates.is_b2b        = Boolean(body.isB2b);
+  if (body.moq           !== undefined) updates.moq           = parseInt(String(body.moq), 10);
 
   const { data, error } = await getSupabaseAdmin()
     .from('products').update(updates).eq('id', id).select().single();

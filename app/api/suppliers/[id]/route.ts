@@ -23,6 +23,7 @@ function mapSupplier(s: Record<string, unknown>) {
     contactNumbers: (s.contact_numbers as string[]) ?? [],
     authUserId: s.auth_user_id ?? null,
     hideStock: Boolean(s.hide_stock ?? false),
+    accountType: (s.account_type as string) ?? 'business',
   };
 }
 
@@ -59,6 +60,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   if (body.badge         !== undefined) updates.badge         = body.badge;
   if (body.slug          !== undefined) updates.slug          = body.slug ?? null;
   if (body.hideStock     !== undefined) updates.hide_stock    = Boolean(body.hideStock);
+  if (body.accountType   !== undefined) updates.account_type  = body.accountType;
 
   const { data, error } = await getSupabaseAdmin()
     .from('suppliers').update(updates).eq('id', id).select().single();

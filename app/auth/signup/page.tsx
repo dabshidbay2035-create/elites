@@ -34,7 +34,7 @@ function fbErrMsg(e: unknown): string {
 }
 
 type Method   = 'phone' | 'email' | 'google';
-type AcctType = 'user' | 'business';
+type AcctType = 'user' | 'business' | 'supplier';
 
 /* Phone-specific steps */
 type PhoneStep = 'type' | 'name' | 'phone' | 'otp';
@@ -85,11 +85,11 @@ export default function SignupPage() {
 
   /* ── Helpers ─────────────────────────────────── */
   async function createRecord(uid: string, userName: string, userPhone = '') {
-    if (acctType === 'business') {
+    if (acctType === 'business' || acctType === 'supplier') {
       await fetch('/api/suppliers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: userName.trim(), authUserId: uid }),
+        body: JSON.stringify({ name: userName.trim(), authUserId: uid, accountType: acctType }),
       });
     } else {
       await fetch('/api/profile', {
@@ -159,7 +159,7 @@ export default function SignupPage() {
      EMAIL FLOW
   ══════════════════════════════════════════════ */
   async function handleEmailSignup() {
-    if (!name.trim())     { setError(`Enter your ${acctType === 'business' ? 'business' : 'full'} name`); return; }
+    if (!name.trim())     { setError(`Enter your ${acctType === 'business' ? 'business' : acctType === 'supplier' ? 'supplier' : 'full'} name`); return; }
     if (!email.trim())    { setError('Enter your email address'); return; }
     if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
     if (password !== password2) { setError('Passwords do not match'); return; }
@@ -199,7 +199,7 @@ export default function SignupPage() {
      GOOGLE FLOW
   ══════════════════════════════════════════════ */
   async function handleGoogleSignup() {
-    if (!name.trim()) { setError(`Enter your ${acctType === 'business' ? 'business' : 'full'} name`); return; }
+    if (!name.trim()) { setError(`Enter your ${acctType === 'business' ? 'business' : acctType === 'supplier' ? 'supplier' : 'full'} name`); return; }
     setError(''); setLoading(true);
 
     // Store pending signup data so the callback page can create the Supabase record
@@ -293,7 +293,7 @@ export default function SignupPage() {
     return (
       <div className="page-anim auth-wrap">
         <div className="auth-logo">
-          <div className="auth-logo-icon">{acctType === 'business' ? '🏪' : '👤'}</div>
+          <div className="auth-logo-icon">{acctType === 'business' ? '🏪' : acctType === 'supplier' ? '🏭' : '👤'}</div>
           <div className="auth-logo-title">Mogarenta</div>
           <div className="auth-logo-sub">Sign up with Phone</div>
         </div>
@@ -307,7 +307,7 @@ export default function SignupPage() {
         {/* Step 1 — Account type */}
         {phoneStep === 'type' && (
           <>
-            <div className="acct-type-toggle">
+            <div className="acct-type-toggle" style={{ flexDirection: 'column' }}>
               <button className={`acct-type-btn ${acctType === 'user' ? 'active' : ''}`} onClick={() => setAcctType('user')}>
                 <span className="acct-type-icon">👤</span>
                 <span className="acct-type-label">Customer</span>
@@ -317,6 +317,11 @@ export default function SignupPage() {
                 <span className="acct-type-icon">🏪</span>
                 <span className="acct-type-label">Business</span>
                 <span className="acct-type-sub">Sell &amp; manage products</span>
+              </button>
+              <button className={`acct-type-btn ${acctType === 'supplier' ? 'active' : ''}`} onClick={() => setAcctType('supplier')}>
+                <span className="acct-type-icon">🏭</span>
+                <span className="acct-type-label">Supplier</span>
+                <span className="acct-type-sub">Wholesale &amp; bulk orders</span>
               </button>
             </div>
             <div style={{ padding: '0 20px', display: 'flex', gap: 10 }}>
@@ -332,8 +337,8 @@ export default function SignupPage() {
         {phoneStep === 'name' && (
           <div className="auth-card">
             <button className="auth-back-btn" onClick={() => { setPhoneStep('type'); setError(''); }}>← Back</button>
-            <div className="auth-card-title">{acctType === 'user' ? 'Your name' : 'Business name'}</div>
-            <div className="auth-card-sub">{acctType === 'user' ? 'What should we call you?' : 'What is your business called?'}</div>
+            <div className="auth-card-title">{acctType === 'user' ? 'Your name' : acctType === 'supplier' ? 'Supplier name' : 'Business name'}</div>
+            <div className="auth-card-sub">{acctType === 'user' ? 'What should we call you?' : acctType === 'supplier' ? 'What is your company called?' : 'What is your business called?'}</div>
             {error && <div className="auth-error">{error}</div>}
             <div className="form-group" style={{ marginTop: 16 }}>
               <input
@@ -430,7 +435,7 @@ export default function SignupPage() {
     return (
       <div className="page-anim auth-wrap">
         <div className="auth-logo">
-          <div className="auth-logo-icon">{acctType === 'business' ? '🏪' : '👤'}</div>
+          <div className="auth-logo-icon">{acctType === 'business' ? '🏪' : acctType === 'supplier' ? '🏭' : '👤'}</div>
           <div className="auth-logo-title">Mogarenta</div>
           <div className="auth-logo-sub">Sign up with Email</div>
         </div>
@@ -455,7 +460,7 @@ export default function SignupPage() {
             {/* Step 1 — Account type */}
             {emailStep === 'type' && (
               <>
-                <div className="acct-type-toggle">
+                <div className="acct-type-toggle" style={{ flexDirection: 'column' }}>
                   <button className={`acct-type-btn ${acctType === 'user' ? 'active' : ''}`} onClick={() => setAcctType('user')}>
                     <span className="acct-type-icon">👤</span>
                     <span className="acct-type-label">Customer</span>
@@ -465,6 +470,11 @@ export default function SignupPage() {
                     <span className="acct-type-icon">🏪</span>
                     <span className="acct-type-label">Business</span>
                     <span className="acct-type-sub">Sell &amp; manage products</span>
+                  </button>
+                  <button className={`acct-type-btn ${acctType === 'supplier' ? 'active' : ''}`} onClick={() => setAcctType('supplier')}>
+                    <span className="acct-type-icon">🏭</span>
+                    <span className="acct-type-label">Supplier</span>
+                    <span className="acct-type-sub">Wholesale &amp; bulk orders</span>
                   </button>
                 </div>
                 <div style={{ padding: '0 20px', display: 'flex', gap: 10 }}>
@@ -481,14 +491,14 @@ export default function SignupPage() {
               <div className="auth-card">
                 <button className="auth-back-btn" onClick={() => { setEmailStep('type'); setError(''); }}>← Back</button>
                 <div className="auth-card-title">Create your account</div>
-                <div className="auth-card-sub">{acctType === 'business' ? 'Set up your business account' : 'Fill in your details below'}</div>
+                <div className="auth-card-sub">{acctType === 'business' ? 'Set up your business account' : acctType === 'supplier' ? 'Set up your supplier account' : 'Fill in your details below'}</div>
 
                 {error && <div className="auth-error">{error}</div>}
 
                 <div className="form-group" style={{ marginTop: 12 }}>
-                  <label className="form-label">{acctType === 'business' ? 'Business Name' : 'Full Name'} *</label>
+                  <label className="form-label">{acctType === 'business' ? 'Business Name' : acctType === 'supplier' ? 'Supplier / Company Name' : 'Full Name'} *</label>
                   <input className="form-input"
-                    placeholder={acctType === 'business' ? 'TechVault Store' : 'Ahmed Hassan'}
+                    placeholder={acctType === 'business' ? 'TechVault Store' : acctType === 'supplier' ? 'Acme Wholesale Co.' : 'Ahmed Hassan'}
                     value={name} onChange={e => setName(e.target.value)} autoFocus
                   />
                 </div>
@@ -547,7 +557,7 @@ export default function SignupPage() {
   return (
     <div className="page-anim auth-wrap">
       <div className="auth-logo">
-        <div className="auth-logo-icon">{acctType === 'business' ? '🏪' : '👤'}</div>
+        <div className="auth-logo-icon">{acctType === 'business' ? '🏪' : acctType === 'supplier' ? '🏭' : '👤'}</div>
         <div className="auth-logo-title">Mogarenta</div>
         <div className="auth-logo-sub">Sign up with Google</div>
       </div>
@@ -555,7 +565,7 @@ export default function SignupPage() {
       {/* Step 1 — Account type */}
       {googleStep === 'type' && (
         <>
-          <div className="acct-type-toggle">
+          <div className="acct-type-toggle" style={{ flexDirection: 'column' }}>
             <button className={`acct-type-btn ${acctType === 'user' ? 'active' : ''}`} onClick={() => setAcctType('user')}>
               <span className="acct-type-icon">👤</span>
               <span className="acct-type-label">Customer</span>
@@ -565,6 +575,11 @@ export default function SignupPage() {
               <span className="acct-type-icon">🏪</span>
               <span className="acct-type-label">Business</span>
               <span className="acct-type-sub">Sell &amp; manage products</span>
+            </button>
+            <button className={`acct-type-btn ${acctType === 'supplier' ? 'active' : ''}`} onClick={() => setAcctType('supplier')}>
+              <span className="acct-type-icon">🏭</span>
+              <span className="acct-type-label">Supplier</span>
+              <span className="acct-type-sub">Wholesale &amp; bulk orders</span>
             </button>
           </div>
           <div style={{ padding: '0 20px', display: 'flex', gap: 10 }}>
@@ -580,10 +595,12 @@ export default function SignupPage() {
       {googleStep === 'name' && (
         <div className="auth-card">
           <button className="auth-back-btn" onClick={() => { setGoogleStep('type'); setError(''); }}>← Back</button>
-          <div className="auth-card-title">{acctType === 'business' ? 'Business name' : 'Your name'}</div>
+          <div className="auth-card-title">{acctType === 'business' ? 'Business name' : acctType === 'supplier' ? 'Supplier name' : 'Your name'}</div>
           <div className="auth-card-sub">
             {acctType === 'business'
               ? 'What is your business called?'
+              : acctType === 'supplier'
+              ? 'What is your company called?'
               : 'What should we call you? (or leave for Google to fill in)'}
           </div>
 
@@ -591,12 +608,12 @@ export default function SignupPage() {
 
           <div className="form-group" style={{ marginTop: 16 }}>
             <input className="form-input"
-              placeholder={acctType === 'business' ? 'TechVault Store' : 'Ahmed Hassan (optional)'}
+              placeholder={acctType === 'business' ? 'TechVault Store' : acctType === 'supplier' ? 'Acme Wholesale Co.' : 'Ahmed Hassan (optional)'}
               value={name} onChange={e => setName(e.target.value)} autoFocus
             />
           </div>
 
-          <button className="auth-google-btn" onClick={handleGoogleSignup} disabled={loading || (acctType === 'business' && !name.trim())}>
+          <button className="auth-google-btn" onClick={handleGoogleSignup} disabled={loading || ((acctType === 'business' || acctType === 'supplier') && !name.trim())}>
             {loading ? (
               <><span className="btn-spinner" style={{ borderTopColor: '#4285F4' }} /> Redirecting…</>
             ) : (

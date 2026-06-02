@@ -77,7 +77,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const res  = await fetch(`/api/suppliers?authUserId=${uid}`);
       const data = await res.json();
       const sup  = Array.isArray(data) ? data[0] ?? null : null;
-      if (sup) { setCurrentSupplier(sup); setCurrentProfile(null); setAccountType('business'); return; }
+      if (sup) {
+        setCurrentSupplier(sup);
+        setCurrentProfile(null);
+        setAccountType((sup.accountType === 'supplier' ? 'supplier' : 'business') as AccountType);
+        return;
+      }
     } catch { /* ignore */ }
     try {
       const res  = await fetch(`/api/profile?userId=${uid}`);

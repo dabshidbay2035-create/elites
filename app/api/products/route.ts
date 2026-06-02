@@ -38,6 +38,9 @@ function mapProduct(p: Record<string, unknown>) {
     brand,
     imageUrl:      p.image_url     ?? null,
     imageUrls:     p.image_urls    ?? [],
+    priceTiers:    Array.isArray(p.price_tiers) ? p.price_tiers : [],
+    isB2b:         Boolean(p.is_b2b ?? false),
+    moq:           (p.moq as number) ?? 1,
   };
 }
 
@@ -91,11 +94,24 @@ async function getMergedCatalog(): Promise<ReturnType<typeof mapProduct>[] | nul
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const barcode  = searchParams.get('barcode');
-  const category = searchParams.get('category');
-  const q        = searchParams.get('q');
+  const barcode    = searchParams.get('barcode');
+  const category   = searchParams.get('category');
+  const q          = searchParams.get('q');
+  const supplierId = searchParams.get('supplierId');
 
   const CACHE = { 'Cache-Control': 'public, s-maxage=10, stale-while-revalidate=30' };
+
+  // ── Supplier product filter ───────────────────────────────────
+  if (supplierId) {
+    try {
+      const { data, error } = await getSupabaseAdmin()
+        .from('products').select('*').eq('supplier_id', parseInt(supplierId, 10)).order('id');
+      if (error) throw error;
+      return NextResponse.json((data ?? []).map(r => mapProduct(r as Record<string, unknown>)));
+    } catch {
+      return NextResponse.json([]);
+    }
+  }
 
   // ── Barcode lookup (exact match) ──────────────────────────────
   if (barcode) {
@@ -178,6 +194,7 @@ export async function POST(req: Request) {
   const {
     name, price, originalPrice, category, subCategory, icon, stock,
     sku, description, imageUrl, imageUrls, supplierId, barcode, tags, brand,
+    priceTiers, isB2b, moq,
   } = body;
 
   if (!name || !price || !category) {
@@ -201,6 +218,9 @@ export async function POST(req: Request) {
     brand:          brand?.trim()       ?? null,
     image_url:      imageUrl            ?? null,
     image_urls:     Array.isArray(imageUrls) ? imageUrls : [],
+    price_tiers:    Array.isArray(priceTiers) ? priceTiers : [],
+    is_b2b:         Boolean(isB2b ?? false),
+    moq:            parseInt(moq ?? '1', 10),
   };
 
   const basicProduct: Record<string, unknown> = {

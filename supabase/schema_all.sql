@@ -349,6 +349,14 @@ ALTER TABLE suppliers         ADD COLUMN IF NOT EXISTS hide_stock BOOLEAN NOT NU
 -- Minimum order quantity per business-product listing
 ALTER TABLE business_products ADD COLUMN IF NOT EXISTS moq INTEGER NOT NULL DEFAULT 1;
 
+-- Supplier account type (business = retailer, supplier = wholesaler)
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS account_type TEXT NOT NULL DEFAULT 'business';
+
+-- B2B product fields (for wholesale supplier products)
+ALTER TABLE products   ADD COLUMN IF NOT EXISTS price_tiers JSONB    DEFAULT '[]';
+ALTER TABLE products   ADD COLUMN IF NOT EXISTS is_b2b      BOOLEAN  NOT NULL DEFAULT false;
+ALTER TABLE products   ADD COLUMN IF NOT EXISTS moq         INTEGER  NOT NULL DEFAULT 1;
+
 
 -- ============================================================
 -- 6. SUPABASE STORAGE  (chat images + product photos)

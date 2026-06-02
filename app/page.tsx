@@ -5,11 +5,13 @@ import { useRouter } from 'next/navigation';
 import Header from '@/components/Header';
 import ProductCard from '@/components/ProductCard';
 import { useApp } from '@/context/AppContext';
+import { useAuth } from '@/context/AuthContext';
 import { CATEGORIES } from '@/lib/data';
 
 export default function ExplorePage() {
   const router = useRouter();
   const { state, setCartOpen, addToCart, toggleWishlist } = useApp();
+  const { accountType } = useAuth();
   const { products, loading } = state;
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('all');
@@ -21,7 +23,8 @@ export default function ExplorePage() {
   [state.inventory]);
 
   const filtered = useMemo(() => {
-    let list = products;
+    // Filter out B2B-only products for non-business/supplier users
+    let list = products.filter(p => !p.isB2b || accountType === 'business' || accountType === 'supplier');
     if (activeCategory !== 'all') list = list.filter(p => p.category === activeCategory);
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -35,7 +38,7 @@ export default function ExplorePage() {
       );
     }
     return list;
-  }, [products, search, activeCategory]);
+  }, [products, search, activeCategory, accountType]);
 
   const bestSellers = useMemo(() =>
     [...products].sort((a, b) => b.sold - a.sold).slice(0, 8),

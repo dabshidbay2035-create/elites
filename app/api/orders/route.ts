@@ -22,7 +22,32 @@ function mapOrder(o: Record<string, unknown>) {
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const userId = searchParams.get('userId');
+  const userId     = searchParams.get('userId');
+  const supplierId = searchParams.get('supplierId');
+
+  // ── Supplier orders filter ─────────────────────────────────
+  if (supplierId) {
+    try {
+      // Fetch all products belonging to this supplier
+      const { data: prodData } = await getSupabaseAdmin()
+        .from('products').select('id').eq('supplier_id', parseInt(supplierId, 10));
+      const supplierProductIds = new Set((prodData ?? []).map((p: Record<string, unknown>) => p.id as number));
+
+      // Fetch all orders
+      const { data: orderData, error } = await getSupabaseAdmin()
+        .from('orders').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+
+      // Filter orders that contain at least one supplier product
+      const filtered = (orderData ?? []).filter(o => {
+        const items = Array.isArray(o.items) ? o.items : [];
+        return items.some((item: Record<string, unknown>) => supplierProductIds.has(item.id as number));
+      });
+      return NextResponse.json(filtered.map(o => mapOrder(o as Record<string, unknown>)));
+    } catch {
+      return NextResponse.json([]);
+    }
+  }
 
   try {
     let query = getSupabaseAdmin()

@@ -11,6 +11,12 @@ export interface SubCategory {
   icon: string;
 }
 
+export interface PriceTier {
+  minQty: number;
+  maxQty: number | null;
+  price:  number;
+}
+
 export interface Product {
   id:            number;
   name:          string;
@@ -31,6 +37,9 @@ export interface Product {
   brand?:        string;
   imageUrl?:     string | null; // legacy single photo (kept for backwards compat)
   imageUrls?:    string[];      // multiple product photos (preferred)
+  priceTiers?:   PriceTier[];   // wholesale tier pricing
+  isB2b?:        boolean;       // only visible to business/supplier accounts
+  moq?:          number;        // minimum order quantity
 }
 
 /** A product that a specific business has claimed from the global catalog */
@@ -65,6 +74,7 @@ export interface Supplier {
   contactNumbers?:string[];
   authUserId?:    string;
   hideStock?:     boolean;  // hide stock count from public customers
+  accountType?:   'business' | 'supplier';
 }
 
 export interface CartItem {
@@ -110,7 +120,7 @@ export interface UserProfile {
   createdAt: string;
 }
 
-export type AccountType   = 'user' | 'business';
+export type AccountType   = 'user' | 'business' | 'supplier';
 export type PaymentMethod = 'waafi' | 'cash' | 'card';
 export type PaymentState  = 'idle'  | 'pending' | 'success' | 'error';
 

@@ -22,6 +22,7 @@ function mapSupplier(s: Record<string, unknown>) {
     bio:            s.bio          ?? '',
     contactNumbers: (s.contact_numbers as string[]) ?? [],
     authUserId:     s.auth_user_id  ?? null,
+    accountType:    (s.account_type as string) ?? 'business',
   };
 }
 
@@ -51,7 +52,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const body = await req.json();
   const { name, authUserId, location, icon, description, categories,
-          discount, deliveryDays, minOrder, badge, verified } = body;
+          discount, deliveryDays, minOrder, badge, verified, accountType } = body;
 
   if (!name) {
     return NextResponse.json({ error: 'name is required' }, { status: 400 });
@@ -80,6 +81,7 @@ export async function POST(req: Request) {
     badge:         badge?.trim()      ?? 'New',
     bio:           '',
     contact_numbers: [],
+    account_type:  (accountType === 'supplier' || accountType === 'business') ? accountType : 'business',
   };
 
   // Compute next safe ID to work around a potentially broken SERIAL sequence

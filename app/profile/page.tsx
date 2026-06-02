@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
 import { CATEGORIES, SUBCATEGORIES } from '@/lib/data';
 import type { Product, BusinessProduct } from '@/lib/types';
+import SupplierDashboard from '@/components/SupplierDashboard';
 
 const BarcodeScanner       = lazy(() => import('@/components/BarcodeScanner'));
 const ProductImageUpload   = lazy(() => import('@/components/ProductImageUpload'));
@@ -617,6 +618,22 @@ export default function ProfilePage() {
           <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => router.push('/auth/login')}>Sign In</button>
           <button className="btn btn-outline" style={{ marginTop: 10 }} onClick={() => router.push('/auth/signup')}>Create Account</button>
         </div>
+      </div>
+    );
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     SUPPLIER PROFILE
+  ══════════════════════════════════════════════════════════════ */
+  if (accountType === 'supplier' && currentSupplier) {
+    return (
+      <div className="page-anim">
+        <Header showSearch={false} />
+        <div className="page-title-bar">
+          <span className="page-title">🏭 Supplier Dashboard</span>
+          <button className="btn btn-ghost btn-sm" onClick={handleSignOut}>Sign Out</button>
+        </div>
+        <SupplierDashboard supplier={currentSupplier} />
       </div>
     );
   }

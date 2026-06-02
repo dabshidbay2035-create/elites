@@ -40,16 +40,16 @@ export default function AuthCallbackPage() {
         try {
           setStatus('Setting up your account…');
           const { accountType, name } = JSON.parse(pendingRaw) as {
-            accountType: 'user' | 'business';
+            accountType: 'user' | 'business' | 'supplier';
             name:        string;
           };
           localStorage.removeItem('mogarenta_pending_oauth');
 
-          if (accountType === 'business') {
+          if (accountType === 'business' || accountType === 'supplier') {
             await fetch('/api/suppliers', {
               method:  'POST',
               headers: { 'Content-Type': 'application/json' },
-              body:    JSON.stringify({ name: name || 'My Business', authUserId: uid }),
+              body:    JSON.stringify({ name: name || 'My Business', authUserId: uid, accountType }),
             });
           } else {
             await fetch('/api/profile', {
