@@ -1,17 +1,18 @@
 'use client';
 
+import type { CSSProperties } from 'react';
+
 /**
  * Renders a product's primary photo, falling back to the emoji icon.
  * Drop-in replacement wherever {product.icon} was used.
  */
 interface Props {
-  icon:      string;
-  imageUrl?: string | null;
+  icon:       string;
+  imageUrl?:  string | null;
   imageUrls?: string[];
-  name:      string;
-  /** CSS class applied to <img> OR the outer <span> wrapper */
+  name:       string;
   className?: string;
-  style?:    React.CSSProperties;
+  style?:     CSSProperties;
 }
 
 export default function ProductImage({ icon, imageUrl, imageUrls, name, className, style }: Props) {

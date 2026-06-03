@@ -1,15 +1,13 @@
 'use client';
 
-import dynamic from 'next/dynamic';
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useApp }  from '@/context/AppContext';
 import type { Supplier, Product, Order } from '@/lib/types';
 import Link from 'next/link';
 
-/* ── SSR guard ──────────────────────────────────────────────────────── */
-const AdminDashboard = dynamic(() => Promise.resolve(AdminDashboardInner), { ssr: false });
-export default function AdminPage() { return <AdminDashboard />; }
+/* ── Exported page ──────────────────────────────────────────────────── */
+export default function AdminPage() { return <AdminDashboardInner />; }
 
 /* ── Types ──────────────────────────────────────────────────────────── */
 type AdminRole = 'admin' | 'semi_admin' | null;

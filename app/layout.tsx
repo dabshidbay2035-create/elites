@@ -10,6 +10,9 @@ import ToastContainer    from '@/components/Toast';
 import InstallPrompt     from '@/components/InstallPrompt';
 import WishlistSync      from '@/components/WishlistSync';
 
+// This app is fully dynamic (auth + real-time DB) — never statically pre-render.
+export const dynamic = 'force-dynamic';
+
 export const metadata: Metadata = {
   title: 'Mogarenta Shop',
   description: 'E-commerce & Point of Sale',
