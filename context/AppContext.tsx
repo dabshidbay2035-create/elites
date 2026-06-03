@@ -61,7 +61,7 @@ const initial: AppState = {
   paymentMethod: 'waafi', paymentState: 'idle',
   discount: 0, toasts: [],
   cartOpen: false,
-  loading: true,
+  loading: true,  // becomes false as soon as loadFresh() resolves or 8s timeout fires
 };
 
 function reducer(state: AppState, action: Action): AppState {
@@ -129,27 +129,39 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (cachedSuppliers)     dispatch({ type: 'SET_SUPPLIERS',     payload: cachedSuppliers });
     if (cachedNotifications) dispatch({ type: 'SET_NOTIFICATIONS', payload: cachedNotifications });
 
+    // Safety timeout — never let loading spin forever
+    const safetyTimer = setTimeout(() => {
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }, 8000);
+
     // 2. Fetch fresh data in background (stale-while-revalidate)
     async function loadFresh() {
       try {
+        const ctrl = new AbortController();
+        const timeout = setTimeout(() => ctrl.abort(), 7000);
+
         const [pRes, sRes, nRes] = await Promise.all([
-          fetch('/api/products'),
-          fetch('/api/suppliers'),
-          fetch('/api/notifications'),
+          fetch('/api/products',     { signal: ctrl.signal }),
+          fetch('/api/suppliers',    { signal: ctrl.signal }),
+          fetch('/api/notifications',{ signal: ctrl.signal }),
         ]);
+        clearTimeout(timeout);
 
         const [products, suppliers, notifications] = await Promise.all([
           pRes.json(), sRes.json(), nRes.json(),
         ]);
 
-        if (Array.isArray(products) && products.length) {
-          dispatch({ type: 'SET_PRODUCTS',   payload: products });
-          dispatch({ type: 'SET_INVENTORY',  payload: products.map((p: Product) => ({ id: p.id, stock: p.stock })) });
-          writeCache(CACHE.products, products);
+        // Always update products from DB — even empty array clears stale cache
+        if (Array.isArray(products)) {
+          dispatch({ type: 'SET_PRODUCTS',  payload: products });
+          dispatch({ type: 'SET_INVENTORY', payload: products.map((p: Product) => ({ id: p.id, stock: p.stock })) });
+          if (products.length) writeCache(CACHE.products, products);
+          else { try { localStorage.removeItem(CACHE.products); } catch { /* ignore */ } }
         }
-        if (Array.isArray(suppliers) && suppliers.length) {
-          dispatch({ type: 'SET_SUPPLIERS',  payload: suppliers });
-          writeCache(CACHE.suppliers, suppliers);
+        if (Array.isArray(suppliers)) {
+          dispatch({ type: 'SET_SUPPLIERS', payload: suppliers });
+          if (suppliers.length) writeCache(CACHE.suppliers, suppliers);
+          else { try { localStorage.removeItem(CACHE.suppliers); } catch { /* ignore */ } }
         }
         if (Array.isArray(notifications)) {
           dispatch({ type: 'SET_NOTIFICATIONS', payload: notifications });
@@ -158,6 +170,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         console.error('[AppContext] data fetch failed:', err);
       } finally {
+        clearTimeout(safetyTimer);
         dispatch({ type: 'SET_LOADING', payload: false });
       }
     }
