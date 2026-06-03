@@ -1,16 +1,18 @@
 'use client';
 
-import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import Header from '@/components/Header';
 import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
 import { CATEGORIES, SUBCATEGORIES } from '@/lib/data';
 import type { Product, BusinessProduct } from '@/lib/types';
-import SupplierDashboard from '@/components/SupplierDashboard';
 
-const BarcodeScanner       = lazy(() => import('@/components/BarcodeScanner'));
-const ProductImageUpload   = lazy(() => import('@/components/ProductImageUpload'));
+/* ── Heavy client-only components — loaded after hydration ─── */
+const SupplierDashboard  = dynamic(() => import('@/components/SupplierDashboard'),  { ssr: false });
+const BarcodeScanner     = dynamic(() => import('@/components/BarcodeScanner'),     { ssr: false });
+const ProductImageUpload = dynamic(() => import('@/components/ProductImageUpload'), { ssr: false });
 
 /* ── AI Generate button (inline component) ─────────────────── */
 interface AiResult { name?: string; description?: string; brand?: string; category?: string; subCategory?: string; tags?: string[]; }
@@ -1247,12 +1249,10 @@ export default function ProfilePage() {
 
       {/* ── Scanner Modal ─────────────────────────────── */}
       {showScanner && (
-        <Suspense fallback={null}>
-          <BarcodeScanner
-            onDetected={code => { setShowScanner(false); handleBarcodeDetected(code); }}
-            onClose={() => setShowScanner(false)}
-          />
-        </Suspense>
+        <BarcodeScanner
+          onDetected={code => { setShowScanner(false); handleBarcodeDetected(code); }}
+          onClose={() => setShowScanner(false)}
+        />
       )}
 
       {/* ── Claim Modal ───────────────────────────────── */}
@@ -1402,17 +1402,11 @@ export default function ProfilePage() {
                     (up to 8 · first is cover)
                   </span>
                 </label>
-                <Suspense fallback={
-                  <div style={{ height:60, display:'flex', alignItems:'center', color:'var(--text-muted)', fontSize:'.85rem' }}>
-                    Loading uploader…
-                  </div>
-                }>
-                  <ProductImageUpload
-                    urls={form.imageUrls}
-                    onChange={urls => pf('imageUrls', urls)}
-                    maxPhotos={8}
-                  />
-                </Suspense>
+                <ProductImageUpload
+                  urls={form.imageUrls}
+                  onChange={urls => pf('imageUrls', urls)}
+                  maxPhotos={8}
+                />
               </div>
 
               {/* ── AI Generate button ────────────────────── */}

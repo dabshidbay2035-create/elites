@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import Header from '@/components/Header';
 import { useApp } from '@/context/AppContext';
 import { useAuth } from '@/context/AuthContext';
-import Receipt from '@/components/Receipt';
 import type { PaymentMethod } from '@/lib/types';
+
+const Receipt = dynamic(() => import('@/components/Receipt'), { ssr: false });
 
 interface Address {
   id: number; label: string; fullName: string;
