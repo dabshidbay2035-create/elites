@@ -57,36 +57,16 @@ function matchesQuery(p: { name?: unknown; description?: unknown; sku?: unknown;
 }
 
 /**
- * Builds the full product catalog.
- * DB IS THE SOURCE OF TRUTH:
- *   1. Start with every product in Supabase (incl. newly-added ones, ID 66+)
- *      enriched with seed metadata where DB columns are empty.
- *   2. Append static seed products whose ID is NOT in the DB, so the catalog
- *      stays complete even if the DB was only partially seeded.
- * Returns null if the DB is unreachable (caller falls back to static).
+ * Fetches the full product catalog directly from the DB.
+ * DB is the ONLY source of truth — no static seed fallback.
+ * Returns null only when the DB is completely unreachable.
  */
-async function getMergedCatalog(): Promise<ReturnType<typeof mapProduct>[] | null> {
+async function getCatalogFromDB(): Promise<ReturnType<typeof mapProduct>[] | null> {
   try {
     const { data, error } = await getSupabaseAdmin()
       .from('products').select('*').order('id');
     if (error) throw error;
-
-    const dbProducts = (data ?? []).map(r => mapProduct(r as Record<string, unknown>));
-    const dbIds = new Set(dbProducts.map(p => p.id));
-
-    // Add static products not yet present in the DB
-    const staticOnly = PRODUCTS
-      .filter(s => !dbIds.has(s.id))
-      .map(s => mapProduct({
-        id: s.id, name: s.name, price: s.price, original_price: s.originalPrice,
-        category: s.category, sub_category: s.subCategory, icon: s.icon,
-        stock: s.stock, sku: s.sku, supplier_id: s.supplierId,
-        rating: s.rating, reviews: s.reviews, sold: s.sold,
-        description: s.description, barcode: s.barcode, tags: s.tags,
-        brand: s.brand, image_url: s.imageUrl ?? null, image_urls: s.imageUrls ?? [],
-      }));
-
-    return [...dbProducts, ...staticOnly].sort((a, b) => Number(a.id) - Number(b.id));
+    return (data ?? []).map(r => mapProduct(r as Record<string, unknown>));
   } catch {
     return null; // DB unreachable
   }
@@ -163,26 +143,11 @@ export async function GET(req: Request) {
     return NextResponse.json(found);
   }
 
-  // ── Build catalog (DB source of truth, static fills gaps) ─────
-  const catalog = await getMergedCatalog();
+  // ── Build catalog purely from DB ─────────────────────────────
+  const catalog = await getCatalogFromDB();
 
-  // DB unreachable → fall back to static seed
-  if (catalog === null) {
-    let list: ReturnType<typeof mapProduct>[] = PRODUCTS.map(s => mapProduct({
-      id: s.id, name: s.name, price: s.price, original_price: s.originalPrice,
-      category: s.category, sub_category: s.subCategory, icon: s.icon,
-      stock: s.stock, sku: s.sku, supplier_id: s.supplierId,
-      rating: s.rating, reviews: s.reviews, sold: s.sold,
-      description: s.description, barcode: s.barcode, tags: s.tags,
-      brand: s.brand, image_url: s.imageUrl ?? null, image_urls: s.imageUrls ?? [],
-    }));
-    if (category) list = list.filter(p => p.category === category);
-    if (q)        list = list.filter(p => matchesQuery(p, q));
-    return NextResponse.json(list, { headers: CACHE });
-  }
-
-  // Apply filters on the live catalog
-  let result = catalog;
+  // DB unreachable → return empty (never show static seed products)
+  let result = catalog ?? [];
   if (category) result = result.filter(p => p.category === category);
   if (q)        result = result.filter(p => matchesQuery(p, q));
 
