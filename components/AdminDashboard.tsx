@@ -1,0 +1,853 @@
+'use client';
+
+import React, { useEffect, useState, useCallback } from 'react';
+import { useAuth } from '@/context/AuthContext';
+import { useApp }  from '@/context/AppContext';
+import type { Supplier, Product, Order } from '@/lib/types';
+import Link from 'next/link';
+
+/* ── Types ──────────────────────────────────────────────────────────── */
+type AdminRole = 'admin' | 'semi_admin' | null;
+type Tab = 'overview' | 'businesses' | 'products' | 'orders' | 'users' | 'team';
+
+interface AdminStats {
+  totalBusinesses: number; totalSuppliers: number; totalProducts: number;
+  totalOrders: number; totalRevenue: number; totalUsers: number;
+  pendingVerifications: number; recentOrders: Order[];
+}
+interface AdminUser  { id: string; fullName: string; phone: string; avatar: string; verified: boolean; createdAt: string; }
+interface AdminEntry { id: number; userId: string; role: string; name: string; email: string; createdAt: string; }
+
+/* ── Shared helpers ─────────────────────────────────────────────────── */
+const fmtDate = (s: string) => s ? new Date(s).toLocaleDateString() : '—';
+const fmtAmt  = (n: number) => `$${Number(n ?? 0).toFixed(2)}`;
+
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, string> = {
+    completed:'#10B981', pending:'#F59E0B', cancelled:'#EF4444',
+    processing:'#3B82F6', refunded:'#8B5CF6',
+  };
+  const c = map[status?.toLowerCase()] ?? '#64748B';
+  return <span style={{ background:c+'22', color:c, border:`1px solid ${c}44`, borderRadius:99, padding:'2px 10px', fontSize:'.72rem', fontWeight:700, whiteSpace:'nowrap' }}>{status||'unknown'}</span>;
+}
+
+function RoleBadge({ role }: { role: string }) {
+  const isAdmin = role === 'admin';
+  return (
+    <span style={{
+      background: isAdmin ? '#4F46E522' : '#F59E0B22',
+      color:      isAdmin ? '#4F46E5'   : '#B45309',
+      border:     isAdmin ? '1px solid #4F46E544' : '1px solid #F59E0B44',
+      borderRadius: 99, padding: '2px 10px', fontSize: '.72rem', fontWeight: 700,
+    }}>
+      {isAdmin ? '👑 Admin' : '👁️ Viewer'}
+    </span>
+  );
+}
+
+const tbl: React.CSSProperties = { width:'100%', borderCollapse:'collapse' };
+const th:  React.CSSProperties = { textAlign:'left', padding:'10px 12px', fontSize:'.75rem', fontWeight:700, color:'var(--text-muted)', borderBottom:'1px solid var(--border)', textTransform:'uppercase', letterSpacing:.5, background:'var(--bg)' };
+const td:  React.CSSProperties = { padding:'10px 12px', fontSize:'.85rem', borderBottom:'1px solid var(--border)', verticalAlign:'middle' };
+
+/* ══════════════════════════════════════════════════════════════════════
+   MAIN COMPONENT
+══════════════════════════════════════════════════════════════════════ */
+export default function AdminDashboard() {
+  const { user }  = useAuth();
+  const { toast } = useApp();
+
+  const [role,    setRole]    = useState<AdminRole>(null);
+  const [checking,setChecking]= useState(true);
+
+  // Tab state
+  const [tab, setTab] = useState<Tab>('overview');
+
+  // Data
+  const [stats,     setStats]     = useState<AdminStats | null>(null);
+  const [businesses,setBusinesses]= useState<Supplier[]>([]);
+  const [products,  setProducts]  = useState<Product[]>([]);
+  const [orders,    setOrders]    = useState<Order[]>([]);
+  const [users,     setUsers]     = useState<AdminUser[]>([]);
+  const [admins,    setAdmins]    = useState<AdminEntry[]>([]);
+  const [loading,   setLoading]   = useState(false);
+
+  // Edit states
+  const [editBiz,    setEditBiz]    = useState<Supplier | null>(null);
+  const [editProd,   setEditProd]   = useState<Product  | null>(null);
+  const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
+
+  // Team management
+  const [showAddAdmin,  setShowAddAdmin]  = useState(false);
+  const [newAdminUid,   setNewAdminUid]   = useState('');
+  const [newAdminName,  setNewAdminName]  = useState('');
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [newAdminRole,  setNewAdminRole]  = useState<'admin'|'semi_admin'>('semi_admin');
+  const [savingAdmin,   setSavingAdmin]   = useState(false);
+
+  const isAdmin = role === 'admin';
+
+  /* ── Auth check ────────────────────────────────────────────────── */
+  useEffect(() => {
+    if (!user?.id) { setChecking(false); return; }
+    fetch(`/api/admin/check?uid=${user.id}`)
+      .then(r => r.json())
+      .then(d => setRole(d.role ?? null))
+      .catch(() => setRole(null))
+      .finally(() => setChecking(false));
+  }, [user?.id]);
+
+  /* ── Load data ─────────────────────────────────────────────────── */
+  const load = useCallback(async (t: Tab) => {
+    setLoading(true);
+    try {
+      if (t === 'overview') {
+        const r = await fetch('/api/admin/stats'); setStats(await r.json());
+      } else if (t === 'businesses') {
+        const r = await fetch('/api/suppliers');   setBusinesses(await r.json());
+      } else if (t === 'products') {
+        const r = await fetch('/api/products');    setProducts(await r.json());
+      } else if (t === 'orders') {
+        const r = await fetch('/api/orders');      setOrders(await r.json());
+      } else if (t === 'users') {
+        const r = await fetch('/api/admin/users'); setUsers(await r.json());
+      } else if (t === 'team') {
+        const r = await fetch('/api/admin/admins'); setAdmins(await r.json());
+      }
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { if (role) load(tab); }, [tab, role, load]);
+
+  /* ── Guards ────────────────────────────────────────────────────── */
+  if (checking) return (
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'80vh', flexDirection:'column', gap:12 }}>
+      <div className="spinner" style={{ width:36, height:36 }} />
+      <span style={{ color:'var(--text-muted)' }}>Checking access…</span>
+    </div>
+  );
+
+  if (!user) return (
+    <div style={{ maxWidth:420, margin:'80px auto', textAlign:'center', padding:24 }}>
+      <div style={{ fontSize:48, marginBottom:16 }}>🔒</div>
+      <h2 style={{ marginBottom:8 }}>Admin Access</h2>
+      <p style={{ color:'var(--text-muted)', marginBottom:20 }}>You need to be logged in to access this page.</p>
+      <Link href="/auth/login" className="btn btn-primary">Sign In</Link>
+    </div>
+  );
+
+  if (role === null) return (
+    <div style={{ maxWidth:480, margin:'80px auto', padding:24 }}>
+      <div style={{ background:'var(--surface)', borderRadius:16, padding:32, textAlign:'center', border:'1px solid var(--border)' }}>
+        <div style={{ fontSize:48, marginBottom:12 }}>⛔</div>
+        <h2 style={{ marginBottom:8 }}>Access Denied</h2>
+        <p style={{ color:'var(--text-muted)', marginBottom:20, lineHeight:1.6 }}>
+          Your account is not authorised to access the admin panel.<br/>
+          Ask an existing admin to add you.
+        </p>
+        <div style={{ background:'var(--bg)', borderRadius:8, padding:'10px 14px', border:'1px solid var(--border)', textAlign:'left', marginBottom:16 }}>
+          <div style={{ fontSize:'.75rem', color:'var(--text-muted)', marginBottom:4 }}>Your User ID (give this to the admin):</div>
+          <code style={{ fontSize:'.8rem', wordBreak:'break-all', color:'var(--primary)' }}>{user.id}</code>
+        </div>
+        <Link href="/" className="btn btn-ghost btn-sm">← Back to Store</Link>
+      </div>
+    </div>
+  );
+
+  /* ── Business edit ─────────────────────────────────────────────── */
+  const saveBiz = async () => {
+    if (!editBiz) return;
+    const res = await fetch(`/api/suppliers/${editBiz.id}`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        name: editBiz.name, bio: editBiz.bio ?? '', location: editBiz.location,
+        verified: editBiz.verified, accountType: editBiz.accountType,
+      }),
+    });
+    if (res.ok) { toast('Saved ✓', 'success'); setEditBiz(null); load('businesses'); }
+    else        { toast('Save failed', 'error'); }
+  };
+
+  const deleteBiz = async (id: number, name: string) => {
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    const res = await fetch(`/api/suppliers/${id}`, { method:'DELETE' });
+    if (res.ok) { toast('Deleted', 'default'); load('businesses'); }
+    else        { toast('Delete failed', 'error'); }
+  };
+
+  const toggleVerify = async (b: Supplier) => {
+    const res = await fetch(`/api/suppliers/${b.id}`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ verified: !b.verified }),
+    });
+    if (res.ok) { toast(b.verified ? 'Unverified' : 'Verified ✓', 'success'); load('businesses'); }
+    else        { toast('Failed', 'error'); }
+  };
+
+  /* ── Product edit ──────────────────────────────────────────────── */
+  const saveProd = async () => {
+    if (!editProd) return;
+    const res = await fetch(`/api/products/${editProd.id}`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        name: editProd.name, price: editProd.price, originalPrice: editProd.originalPrice,
+        category: editProd.category, icon: editProd.icon, stock: editProd.stock,
+        description: editProd.description, moq: (editProd as Product & { moq?: number }).moq ?? 1,
+      }),
+    });
+    if (res.ok) { toast('Saved ✓', 'success'); setEditProd(null); load('products'); }
+    else        { toast('Save failed', 'error'); }
+  };
+
+  const deleteProd = async (id: number, name: string) => {
+    if (!confirm(`Delete "${name}"?`)) return;
+    const res = await fetch(`/api/products/${id}`, { method:'DELETE' });
+    if (res.ok) { toast('Deleted', 'default'); load('products'); }
+    else        { toast('Delete failed', 'error'); }
+  };
+
+  /* ── Team actions ──────────────────────────────────────────────── */
+  const addAdmin = async () => {
+    if (!newAdminUid.trim()) { toast('Enter a user UID', 'error'); return; }
+    setSavingAdmin(true);
+    const res = await fetch('/api/admin/admins', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ userId: newAdminUid.trim(), role: newAdminRole, name: newAdminName.trim(), email: newAdminEmail.trim() }),
+    });
+    setSavingAdmin(false);
+    if (res.ok) {
+      toast(`${newAdminRole === 'admin' ? 'Admin' : 'Viewer'} added ✓`, 'success');
+      setShowAddAdmin(false); setNewAdminUid(''); setNewAdminName(''); setNewAdminEmail(''); setNewAdminRole('semi_admin');
+      load('team');
+    } else {
+      const e = await res.json();
+      toast(e.error ?? 'Failed to add', 'error');
+    }
+  };
+
+  const changeRole = async (a: AdminEntry, newRole: 'admin' | 'semi_admin') => {
+    const res = await fetch(`/api/admin/admins/${a.id}`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ role: newRole }),
+    });
+    if (res.ok) { toast('Role updated ✓', 'success'); load('team'); }
+    else        { toast('Failed', 'error'); }
+  };
+
+  const removeAdmin = async (a: AdminEntry) => {
+    if (a.userId === user.id) { toast("You can't remove yourself", 'error'); return; }
+    if (!confirm(`Remove "${a.name || a.userId}" from admin team?`)) return;
+    const res = await fetch(`/api/admin/admins/${a.id}`, { method:'DELETE' });
+    if (res.ok) { toast('Removed', 'default'); load('team'); }
+    else        { toast('Failed', 'error'); }
+  };
+
+  /* ── TABS ──────────────────────────────────────────────────────── */
+  const TABS: { key: Tab; label: string }[] = [
+    { key:'overview',    label:'📊 Overview'    },
+    { key:'businesses',  label:'🏪 Businesses'  },
+    { key:'products',    label:'📦 Products'    },
+    { key:'orders',      label:'🧾 Orders'      },
+    { key:'users',       label:'👥 Users'       },
+    ...(isAdmin ? [{ key:'team' as Tab, label:'👑 Team' }] : []),
+  ];
+
+  /* ── RENDER ────────────────────────────────────────────────────── */
+  return (
+    <div style={{ minHeight:'100vh', background:'var(--bg)' }}>
+
+      {/* Header */}
+      <div style={{ background:'var(--surface)', borderBottom:'1px solid var(--border)', padding:'12px 20px', display:'flex', alignItems:'center', justifyContent:'space-between', position:'sticky', top:0, zIndex:100 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <span style={{ fontSize:22 }}>⚙️</span>
+          <div>
+            <div style={{ fontWeight:800, fontSize:'1rem' }}>Mogarenta Admin</div>
+            <div style={{ fontSize:'.72rem', color:'var(--text-muted)' }}>
+              {isAdmin ? '👑 Full Admin' : '👁️ View Only'} — {user.displayName || user.id.slice(0,8)}
+            </div>
+          </div>
+        </div>
+        <Link href="/" className="btn btn-ghost btn-sm">← Store</Link>
+      </div>
+
+      {/* Tab Bar */}
+      <div style={{ background:'var(--surface)', borderBottom:'1px solid var(--border)', padding:'0 16px', display:'flex', gap:4, overflowX:'auto' }}>
+        {TABS.map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)} style={{
+            padding:'12px 16px', background:'none', border:'none', cursor:'pointer',
+            fontWeight: tab === t.key ? 700 : 400,
+            color:      tab === t.key ? 'var(--primary)' : 'var(--text-muted)',
+            borderBottom: tab === t.key ? '2px solid var(--primary)' : '2px solid transparent',
+            whiteSpace:'nowrap', fontSize:'.85rem',
+          }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* View-only banner */}
+      {!isAdmin && (
+        <div style={{ background:'#FEF3C722', border:'1px solid #F59E0B44', borderRadius:8, margin:'16px 16px 0', padding:'8px 14px', fontSize:'.82rem', color:'#92400E', display:'flex', alignItems:'center', gap:8 }}>
+          👁️ <strong>View-only mode.</strong>&nbsp;You can see all data but cannot make changes. Contact an Admin to get full access.
+        </div>
+      )}
+
+      {/* Content */}
+      <div style={{ padding:'16px', maxWidth:1200, margin:'0 auto' }}>
+        {loading && tab !== 'overview' ? (
+          <div style={{ display:'flex', justifyContent:'center', padding:60 }}>
+            <div className="spinner" style={{ width:32, height:32 }} />
+          </div>
+        ) : (
+          <>
+            {/* ── OVERVIEW ───────────────────────────────────────── */}
+            {tab === 'overview' && (
+              <div>
+                {stats ? (
+                  <>
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))', gap:12, marginBottom:20 }}>
+                      {[
+                        { label:'Businesses', value: stats.totalBusinesses, icon:'🏪' },
+                        { label:'Suppliers',  value: stats.totalSuppliers,  icon:'🏭' },
+                        { label:'Products',   value: stats.totalProducts,   icon:'📦' },
+                        { label:'Orders',     value: stats.totalOrders,     icon:'🧾' },
+                        { label:'Revenue',    value: fmtAmt(stats.totalRevenue), icon:'💰' },
+                        { label:'Users',      value: stats.totalUsers,      icon:'👥' },
+                      ].map(s => (
+                        <div key={s.label} style={{ background:'var(--surface)', borderRadius:12, padding:'16px 14px', border:'1px solid var(--border)' }}>
+                          <div style={{ fontSize:22, marginBottom:4 }}>{s.icon}</div>
+                          <div style={{ fontSize:'1.4rem', fontWeight:800 }}>{s.value}</div>
+                          <div style={{ fontSize:'.75rem', color:'var(--text-muted)', marginTop:2 }}>{s.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {stats.pendingVerifications > 0 && (
+                      <div style={{ background:'#FEF3C7', border:'1px solid #F59E0B', borderRadius:10, padding:'10px 14px', marginBottom:16, fontSize:'.88rem', color:'#92400E' }}>
+                        ⏳ <strong>{stats.pendingVerifications}</strong> verification request{stats.pendingVerifications > 1 ? 's' : ''} pending
+                      </div>
+                    )}
+                    <div style={{ background:'var(--surface)', borderRadius:12, border:'1px solid var(--border)', overflow:'hidden' }}>
+                      <div style={{ padding:'14px 16px', fontWeight:700, borderBottom:'1px solid var(--border)' }}>🕐 Recent Orders</div>
+                      <div style={{ overflowX:'auto' }}>
+                        <table style={tbl}>
+                          <thead><tr>
+                            <th style={th}>Order ID</th><th style={th}>Customer</th>
+                            <th style={th}>Items</th><th style={th}>Total</th>
+                            <th style={th}>Payment</th><th style={th}>Status</th><th style={th}>Date</th>
+                          </tr></thead>
+                          <tbody>
+                            {(stats.recentOrders ?? []).map(o => (
+                              <tr key={o.id}>
+                                <td style={td}><code style={{ fontSize:'.75rem' }}>{o.id}</code></td>
+                                <td style={td}>{(o as Order & { customerName?: string }).customerName}</td>
+                                <td style={td}>{Array.isArray((o as Order & { items?: unknown[] }).items) ? (o as Order & { items: unknown[] }).items.length : 0}</td>
+                                <td style={td}><strong>{fmtAmt((o as Order & { total?: number }).total ?? 0)}</strong></td>
+                                <td style={td}>{(o as Order & { paymentMethod?: string }).paymentMethod}</td>
+                                <td style={td}><StatusBadge status={(o as Order & { status?: string }).status ?? ''} /></td>
+                                <td style={td}>{fmtDate((o as Order & { createdAt?: string }).createdAt ?? '')}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ display:'flex', justifyContent:'center', padding:60 }}><div className="spinner" style={{ width:32, height:32 }} /></div>
+                )}
+              </div>
+            )}
+
+            {/* ── BUSINESSES ─────────────────────────────────────── */}
+            {tab === 'businesses' && (
+              <div>
+                <div style={{ display:'flex', gap:10, marginBottom:14 }}>
+                  <input className="form-input" placeholder="Search businesses…" style={{ maxWidth:300 }}
+                    onChange={e => {
+                      const q = e.target.value.toLowerCase();
+                      if (!q) load('businesses');
+                      else setBusinesses(prev => prev.filter(b => b.name.toLowerCase().includes(q) || (b.location ?? '').toLowerCase().includes(q)));
+                    }}
+                  />
+                </div>
+                <div style={{ background:'var(--surface)', borderRadius:12, border:'1px solid var(--border)', overflow:'hidden' }}>
+                  <div style={{ overflowX:'auto' }}>
+                    <table style={tbl}>
+                      <thead><tr>
+                        <th style={th}>Name</th><th style={th}>Type</th>
+                        <th style={th}>Location</th><th style={th}>Status</th>
+                        {isAdmin && <th style={th}>Actions</th>}
+                      </tr></thead>
+                      <tbody>
+                        {businesses.map(b => (
+                          <tr key={b.id}>
+                            <td style={td}>
+                              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                                <span style={{ fontSize:20 }}>{b.icon}</span>
+                                <div>
+                                  <div style={{ fontWeight:600 }}>{b.name}</div>
+                                  {b.bio && <div style={{ fontSize:'.72rem', color:'var(--text-muted)' }}>{b.bio.slice(0,40)}{b.bio.length>40?'…':''}</div>}
+                                </div>
+                              </div>
+                            </td>
+                            <td style={td}>
+                              <span style={{ fontSize:'.8rem' }}>{b.accountType === 'supplier' ? '🏭 Supplier' : '🏪 Business'}</span>
+                            </td>
+                            <td style={td}>{b.location || '—'}</td>
+                            <td style={td}>
+                              {b.verified
+                                ? <span style={{ color:'#10B981', fontWeight:600, fontSize:'.8rem' }}>✅ Verified</span>
+                                : <span style={{ color:'#F59E0B', fontWeight:600, fontSize:'.8rem' }}>⏳ Pending</span>}
+                            </td>
+                            {isAdmin && (
+                              <td style={td}>
+                                <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                                  <button className="btn btn-secondary btn-sm" onClick={() => setEditBiz({ ...b })}>✏️ Edit</button>
+                                  <button className="btn btn-secondary btn-sm" onClick={() => toggleVerify(b)}>
+                                    {b.verified ? '⏸ Unverify' : '✅ Verify'}
+                                  </button>
+                                  <button className="btn btn-ghost btn-sm" style={{ color:'var(--danger)' }} onClick={() => deleteBiz(b.id, b.name)}>🗑️</button>
+                                </div>
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                        {businesses.length === 0 && <tr><td colSpan={isAdmin?5:4} style={{ ...td, textAlign:'center', color:'var(--text-muted)' }}>No businesses found</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── PRODUCTS ───────────────────────────────────────── */}
+            {tab === 'products' && (
+              <div>
+                <div style={{ display:'flex', gap:10, marginBottom:14, flexWrap:'wrap' }}>
+                  <input className="form-input" placeholder="Search products…" style={{ maxWidth:260 }}
+                    onChange={e => {
+                      const q = e.target.value.toLowerCase();
+                      if (!q) load('products');
+                      else setProducts(prev => prev.filter(p =>
+                        p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)));
+                    }}
+                  />
+                  <select className="form-input" style={{ maxWidth:180 }}
+                    onChange={e => {
+                      const v = e.target.value;
+                      if (!v) load('products');
+                      else setProducts(prev => prev.filter(p => p.category === v));
+                    }}>
+                    <option value="">All Categories</option>
+                    {['electronics','clothes','home','food','health','sports','medicine','cosmetics','construction','furniture','cars','books','other'].map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                  <select className="form-input" style={{ maxWidth:200 }}
+                    onChange={e => {
+                      const v = parseInt(e.target.value);
+                      if (!v) load('products');
+                      else setProducts(prev => prev.filter(p => p.supplierId === v));
+                    }}>
+                    <option value="">All Businesses</option>
+                    {businesses.map(b => <option key={b.id} value={b.id}>{b.icon} {b.name}</option>)}
+                  </select>
+                </div>
+                <div style={{ background:'var(--surface)', borderRadius:12, border:'1px solid var(--border)', overflow:'hidden' }}>
+                  <div style={{ overflowX:'auto' }}>
+                    <table style={tbl}>
+                      <thead><tr>
+                        <th style={th}>Product</th><th style={th}>Category</th>
+                        <th style={th}>Price</th><th style={th}>Stock</th>
+                        <th style={th}>Supplier</th>
+                        {isAdmin && <th style={th}>Actions</th>}
+                      </tr></thead>
+                      <tbody>
+                        {products.slice(0,200).map(p => {
+                          const sup = businesses.find(b => b.id === p.supplierId);
+                          const img = (p.imageUrls?.[0] ?? p.imageUrl) || null;
+                          return (
+                            <tr key={p.id}>
+                              <td style={td}>
+                                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                                  <div style={{ width:36, height:36, borderRadius:8, background:'var(--border-light,#f1f5f9)', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden', flexShrink:0 }}>
+                                    {img
+                                      // eslint-disable-next-line @next/next/no-img-element
+                                      ? <img src={img} alt={p.name} style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+                                      : <span style={{ fontSize:18 }}>{p.icon}</span>}
+                                  </div>
+                                  <div>
+                                    <div style={{ fontWeight:600, fontSize:'.85rem' }}>{p.name}</div>
+                                    <div style={{ fontSize:'.72rem', color:'var(--text-muted)' }}>{p.sku}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td style={td}><span style={{ fontSize:'.78rem', background:'var(--bg)', border:'1px solid var(--border)', borderRadius:6, padding:'2px 7px' }}>{p.category}</span></td>
+                              <td style={td}><strong>{fmtAmt(p.price)}</strong></td>
+                              <td style={td}>
+                                <span style={{ color: p.stock === 0 ? '#EF4444' : p.stock <= 10 ? '#F59E0B' : 'inherit' }}>
+                                  {p.stock}
+                                </span>
+                              </td>
+                              <td style={td}>{sup ? `${sup.icon} ${sup.name}` : '—'}</td>
+                              {isAdmin && (
+                                <td style={td}>
+                                  <div style={{ display:'flex', gap:6 }}>
+                                    <button className="btn btn-secondary btn-sm" onClick={() => setEditProd({ ...p })}>✏️</button>
+                                    <button className="btn btn-ghost btn-sm" style={{ color:'var(--danger)' }} onClick={() => deleteProd(p.id, p.name)}>🗑️</button>
+                                  </div>
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                        {products.length === 0 && <tr><td colSpan={isAdmin?6:5} style={{ ...td, textAlign:'center', color:'var(--text-muted)' }}>No products</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                  {products.length > 200 && (
+                    <div style={{ padding:'10px 16px', fontSize:'.8rem', color:'var(--text-muted)', borderTop:'1px solid var(--border)' }}>
+                      Showing first 200 of {products.length} products. Use filters to narrow down.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── ORDERS ─────────────────────────────────────────── */}
+            {tab === 'orders' && (
+              <div>
+                <div style={{ display:'flex', gap:10, marginBottom:14 }}>
+                  <select className="form-input" style={{ maxWidth:180 }}
+                    onChange={e => {
+                      const v = e.target.value;
+                      if (!v) load('orders');
+                      else setOrders(prev => prev.filter((o: Order & { status?: string }) => (o.status ?? '').toLowerCase() === v));
+                    }}>
+                    <option value="">All Statuses</option>
+                    <option value="pending">Pending</option>
+                    <option value="completed">Completed</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                </div>
+                <div style={{ background:'var(--surface)', borderRadius:12, border:'1px solid var(--border)', overflow:'hidden' }}>
+                  <div style={{ overflowX:'auto' }}>
+                    <table style={tbl}>
+                      <thead><tr>
+                        <th style={th}>Order ID</th><th style={th}>Customer</th>
+                        <th style={th}>Items</th><th style={th}>Total</th>
+                        <th style={th}>Payment</th><th style={th}>Status</th><th style={th}>Date</th>
+                      </tr></thead>
+                      <tbody>
+                        {(orders as (Order & { customerName?: string; customerPhone?: string; items?: {id:number;qty:number}[]; total?: number; paymentMethod?: string; status?: string; createdAt?: string })[]).map(o => (
+                          <React.Fragment key={o.id}>
+                            <tr style={{ cursor:'pointer' }} onClick={() => setExpandedOrder(expandedOrder === o.id ? null : o.id)}>
+                              <td style={td}><code style={{ fontSize:'.75rem' }}>{o.id}</code></td>
+                              <td style={td}>
+                                <div style={{ fontWeight:600 }}>{o.customerName}</div>
+                                <div style={{ fontSize:'.72rem', color:'var(--text-muted)' }}>{o.customerPhone}</div>
+                              </td>
+                              <td style={td}>{o.items?.length ?? 0}</td>
+                              <td style={td}><strong>{fmtAmt(o.total ?? 0)}</strong></td>
+                              <td style={td}>{o.paymentMethod}</td>
+                              <td style={td}><StatusBadge status={o.status ?? ''} /></td>
+                              <td style={td}>{fmtDate(o.createdAt ?? '')}</td>
+                            </tr>
+                            {expandedOrder === o.id && (
+                              <tr>
+                                <td colSpan={7} style={{ ...td, background:'var(--bg)', paddingTop:0 }}>
+                                  <div style={{ padding:'10px 0', display:'flex', gap:8, flexWrap:'wrap' }}>
+                                    {(o.items ?? []).map((item, i) => {
+                                      const p = products.find(x => x.id === item.id);
+                                      return (
+                                        <div key={i} style={{ background:'var(--surface)', border:'1px solid var(--border)', borderRadius:8, padding:'6px 12px', fontSize:'.8rem' }}>
+                                          {p ? `${p.icon} ${p.name}` : `Product #${item.id}`}
+                                          {' '}<strong>× {item.qty}</strong>
+                                          {p && <span style={{ color:'var(--text-muted)', marginLeft:6 }}>{fmtAmt(p.price * item.qty)}</span>}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        ))}
+                        {orders.length === 0 && <tr><td colSpan={7} style={{ ...td, textAlign:'center', color:'var(--text-muted)' }}>No orders</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── USERS ──────────────────────────────────────────── */}
+            {tab === 'users' && (
+              <div>
+                <div style={{ marginBottom:14 }}>
+                  <input className="form-input" placeholder="Search users by name or phone…" style={{ maxWidth:320 }}
+                    onChange={e => {
+                      const q = e.target.value.toLowerCase();
+                      if (!q) load('users');
+                      else setUsers(prev => prev.filter(u => u.fullName?.toLowerCase().includes(q) || u.phone?.includes(q)));
+                    }}
+                  />
+                </div>
+                <div style={{ background:'var(--surface)', borderRadius:12, border:'1px solid var(--border)', overflow:'hidden' }}>
+                  <div style={{ overflowX:'auto' }}>
+                    <table style={tbl}>
+                      <thead><tr>
+                        <th style={th}>User</th><th style={th}>Phone</th>
+                        <th style={th}>Verified</th><th style={th}>Joined</th>
+                      </tr></thead>
+                      <tbody>
+                        {users.map(u => (
+                          <tr key={u.id}>
+                            <td style={td}>
+                              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                                <span style={{ fontSize:22 }}>{u.avatar || '👤'}</span>
+                                <div>
+                                  <div style={{ fontWeight:600 }}>{u.fullName || 'Unnamed'}</div>
+                                  <div style={{ fontSize:'.72rem', color:'var(--text-muted)' }}>{u.id.slice(0,12)}…</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td style={td}>{u.phone || '—'}</td>
+                            <td style={td}>
+                              {u.verified
+                                ? <span style={{ color:'#10B981', fontSize:'.8rem' }}>✅ Yes</span>
+                                : <span style={{ color:'var(--text-muted)', fontSize:'.8rem' }}>—</span>}
+                            </td>
+                            <td style={td}>{fmtDate(u.createdAt)}</td>
+                          </tr>
+                        ))}
+                        {users.length === 0 && <tr><td colSpan={4} style={{ ...td, textAlign:'center', color:'var(--text-muted)' }}>No users found</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── TEAM (admin only) ───────────────────────────────── */}
+            {tab === 'team' && isAdmin && (
+              <div>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+                  <div>
+                    <div style={{ fontWeight:700, fontSize:'1rem' }}>Admin Team</div>
+                    <div style={{ fontSize:'.8rem', color:'var(--text-muted)' }}>Manage who can access the admin panel and their role</div>
+                  </div>
+                  <button className="btn btn-primary btn-sm" onClick={() => setShowAddAdmin(true)}>+ Add Member</button>
+                </div>
+
+                {/* Role explanation */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:16 }}>
+                  <div style={{ background:'#4F46E511', border:'1px solid #4F46E533', borderRadius:10, padding:'12px 16px' }}>
+                    <div style={{ fontWeight:700, color:'#4F46E5', marginBottom:4 }}>👑 Admin — Full Access</div>
+                    <div style={{ fontSize:'.8rem', color:'var(--text-muted)', lineHeight:1.5 }}>Can view everything, edit businesses & products, delete, verify, manage orders and change team roles.</div>
+                  </div>
+                  <div style={{ background:'#F59E0B11', border:'1px solid #F59E0B33', borderRadius:10, padding:'12px 16px' }}>
+                    <div style={{ fontWeight:700, color:'#B45309', marginBottom:4 }}>👁️ Viewer — Read Only</div>
+                    <div style={{ fontSize:'.8rem', color:'var(--text-muted)', lineHeight:1.5 }}>Can see all data — businesses, products, orders, users — but cannot edit, delete or perform any actions.</div>
+                  </div>
+                </div>
+
+                <div style={{ background:'var(--surface)', borderRadius:12, border:'1px solid var(--border)', overflow:'hidden' }}>
+                  <div style={{ overflowX:'auto' }}>
+                    <table style={tbl}>
+                      <thead><tr>
+                        <th style={th}>Name</th><th style={th}>User ID</th>
+                        <th style={th}>Role</th><th style={th}>Email</th>
+                        <th style={th}>Added</th><th style={th}>Actions</th>
+                      </tr></thead>
+                      <tbody>
+                        {admins.map(a => (
+                          <tr key={a.id}>
+                            <td style={td}>
+                              <div style={{ fontWeight:600 }}>{a.name || 'Unnamed'}</div>
+                              {a.userId === user.id && <div style={{ fontSize:'.72rem', color:'var(--primary)' }}>← You</div>}
+                            </td>
+                            <td style={td}><code style={{ fontSize:'.72rem' }}>{a.userId.slice(0,16)}…</code></td>
+                            <td style={td}><RoleBadge role={a.role} /></td>
+                            <td style={td}>{a.email || '—'}</td>
+                            <td style={td}>{fmtDate(a.createdAt)}</td>
+                            <td style={td}>
+                              <div style={{ display:'flex', gap:6 }}>
+                                <button
+                                  className="btn btn-secondary btn-sm"
+                                  onClick={() => changeRole(a, a.role === 'admin' ? 'semi_admin' : 'admin')}
+                                  disabled={a.userId === user.id}
+                                  title={a.userId === user.id ? "You can't change your own role" : ''}
+                                >
+                                  {a.role === 'admin' ? '→ Viewer' : '→ Admin'}
+                                </button>
+                                <button
+                                  className="btn btn-ghost btn-sm"
+                                  style={{ color: a.userId === user.id ? 'var(--text-muted)' : 'var(--danger)' }}
+                                  onClick={() => removeAdmin(a)}
+                                  disabled={a.userId === user.id}
+                                  title={a.userId === user.id ? "You can't remove yourself" : ''}
+                                >
+                                  🗑️
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {admins.length === 0 && <tr><td colSpan={6} style={{ ...td, textAlign:'center', color:'var(--text-muted)' }}>No team members yet</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ── Edit Business Modal ────────────────────────────────────── */}
+      {editBiz && isAdmin && (
+        <div className="modal-overlay" onClick={() => setEditBiz(null)}>
+          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth:480 }}>
+            <div className="modal-header">
+              <span>✏️ Edit Business — {editBiz.name}</span>
+              <button className="modal-close" onClick={() => setEditBiz(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Name</label>
+                <input className="form-input" value={editBiz.name} onChange={e => setEditBiz(b => b ? { ...b, name: e.target.value } : b)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Bio</label>
+                <textarea className="form-input" rows={2} value={editBiz.bio ?? ''} onChange={e => setEditBiz(b => b ? { ...b, bio: e.target.value } : b)} style={{ resize:'vertical', fontFamily:'inherit' }} />
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                <div className="form-group">
+                  <label className="form-label">Location</label>
+                  <input className="form-input" value={editBiz.location ?? ''} onChange={e => setEditBiz(b => b ? { ...b, location: e.target.value } : b)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Account Type</label>
+                  <select className="form-input" value={(editBiz as Supplier & { accountType?: string }).accountType ?? 'business'} onChange={e => setEditBiz(b => b ? { ...b, accountType: e.target.value } as typeof b : b)}>
+                    <option value="business">🏪 Business</option>
+                    <option value="supplier">🏭 Supplier</option>
+                  </select>
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label" style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer' }}>
+                  <input type="checkbox" checked={editBiz.verified ?? false} onChange={e => setEditBiz(b => b ? { ...b, verified: e.target.checked } : b)} style={{ width:16, height:16 }} />
+                  <span>✅ Mark as Verified</span>
+                </label>
+              </div>
+              <button className="btn btn-primary btn-full" onClick={saveBiz}>Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Product Modal ─────────────────────────────────────── */}
+      {editProd && isAdmin && (
+        <div className="modal-overlay" onClick={() => setEditProd(null)}>
+          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth:480 }}>
+            <div className="modal-header">
+              <span>✏️ Edit Product</span>
+              <button className="modal-close" onClick={() => setEditProd(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Product Name</label>
+                <input className="form-input" value={editProd.name} onChange={e => setEditProd(p => p ? { ...p, name: e.target.value } : p)} />
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                <div className="form-group">
+                  <label className="form-label">Price ($)</label>
+                  <input className="form-input" type="number" min="0" step="0.01" value={editProd.price} onChange={e => setEditProd(p => p ? { ...p, price: parseFloat(e.target.value) } : p)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Original Price ($)</label>
+                  <input className="form-input" type="number" min="0" step="0.01" value={editProd.originalPrice} onChange={e => setEditProd(p => p ? { ...p, originalPrice: parseFloat(e.target.value) } : p)} />
+                </div>
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                <div className="form-group">
+                  <label className="form-label">Stock</label>
+                  <input className="form-input" type="number" min="0" value={editProd.stock} onChange={e => setEditProd(p => p ? { ...p, stock: parseInt(e.target.value) } : p)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Category</label>
+                  <select className="form-input" value={editProd.category} onChange={e => setEditProd(p => p ? { ...p, category: e.target.value } : p)}>
+                    {['electronics','clothes','home','food','health','sports','medicine','cosmetics','construction','furniture','cars','books','other'].map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Description</label>
+                <textarea className="form-input" rows={2} value={editProd.description} onChange={e => setEditProd(p => p ? { ...p, description: e.target.value } : p)} style={{ resize:'vertical', fontFamily:'inherit' }} />
+              </div>
+              <button className="btn btn-primary btn-full" onClick={saveProd}>Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add Admin Modal ────────────────────────────────────────── */}
+      {showAddAdmin && isAdmin && (
+        <div className="modal-overlay" onClick={() => setShowAddAdmin(false)}>
+          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth:440 }}>
+            <div className="modal-header">
+              <span>➕ Add Team Member</span>
+              <button className="modal-close" onClick={() => setShowAddAdmin(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ background:'#EFF6FF', border:'1px solid #BFDBFE', borderRadius:8, padding:'10px 12px', fontSize:'.82rem', color:'#1E40AF', marginBottom:14 }}>
+                💡 The user's UID is shown on the Access Denied page when they visit <code>/admin</code>.
+              </div>
+              <div className="form-group">
+                <label className="form-label">User UID *</label>
+                <input className="form-input" placeholder="Firebase or Supabase UID" value={newAdminUid} onChange={e => setNewAdminUid(e.target.value)} />
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                <div className="form-group">
+                  <label className="form-label">Display Name</label>
+                  <input className="form-input" placeholder="e.g. Ahmed" value={newAdminName} onChange={e => setNewAdminName(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Email (optional)</label>
+                  <input className="form-input" type="email" placeholder="email@example.com" value={newAdminEmail} onChange={e => setNewAdminEmail(e.target.value)} />
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Role *</label>
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                  <button
+                    type="button"
+                    onClick={() => setNewAdminRole('admin')}
+                    style={{ padding:'10px', borderRadius:10, border: newAdminRole==='admin' ? '2px solid #4F46E5' : '2px solid var(--border)', background: newAdminRole==='admin' ? '#4F46E511' : 'var(--surface)', cursor:'pointer', textAlign:'left' }}
+                  >
+                    <div style={{ fontWeight:700, color:'#4F46E5' }}>👑 Admin</div>
+                    <div style={{ fontSize:'.72rem', color:'var(--text-muted)', marginTop:2 }}>Full access — can edit & delete</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewAdminRole('semi_admin')}
+                    style={{ padding:'10px', borderRadius:10, border: newAdminRole==='semi_admin' ? '2px solid #F59E0B' : '2px solid var(--border)', background: newAdminRole==='semi_admin' ? '#F59E0B11' : 'var(--surface)', cursor:'pointer', textAlign:'left' }}
+                  >
+                    <div style={{ fontWeight:700, color:'#B45309' }}>👁️ Viewer</div>
+                    <div style={{ fontSize:'.72rem', color:'var(--text-muted)', marginTop:2 }}>Read-only — view only, no actions</div>
+                  </button>
+                </div>
+              </div>
+              <button className="btn btn-primary btn-full btn-lg" onClick={addAdmin} disabled={savingAdmin || !newAdminUid.trim()}>
+                {savingAdmin ? 'Adding…' : `Add ${newAdminRole === 'admin' ? 'Admin' : 'Viewer'}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
